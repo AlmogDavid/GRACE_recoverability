@@ -1,11 +1,13 @@
-import argparse
 import os.path as osp
 import random
 import subprocess
 from io import StringIO
 from time import perf_counter as t
-import yaml
-from yaml import SafeLoader
+from typing import Dict
+
+import hydra
+import wandb
+from omegaconf import DictConfig, OmegaConf
 import pandas as pd
 import torch
 import torch_geometric.transforms as T
@@ -19,7 +21,7 @@ from model import Encoder, Model, drop_feature, EncoderRecoverability
 from eval import label_classification
 
 
-def train(model: Model, x, edge_index, max_edges_for_r):
+def train(model: Model, x, edge_index, max_edges_for_r, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2):
     model.train()
     optimizer.zero_grad()
     if isinstance(model, EncoderRecoverability):
@@ -61,18 +63,31 @@ def get_free_gpu():
     print('The most free is GPU={} with {} free MiB'.format(idx, gpu_df.iloc[idx]['memory.free']))
     return idx
 
+def cfg2dict(cfg: DictConfig) -> Dict:
+    """
+    Recursively convert OmegaConf to vanilla dict
+    """
+    cfg_dict = {}
+    for k, v in cfg.items():
+        if type(v) == DictConfig:
+            cfg_dict[k] = cfg2dict(v)
+        else:
+            cfg_dict[k] = v
+    return cfg_dict
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, default='DBLP')
-    parser.add_argument('--config', type=str, default='config.yaml')
-    parser.add_argument('--method', choices=("recoverability", "GRACE"), required=True)
-    args = parser.parse_args()
-
+@hydra.main(config_path="configs", config_name="default")  # Config name will be given via command line
+def main(root_config: DictConfig):
+    dataset_name = root_config.dataset
+    config = root_config[dataset_name] # Load the relevant part
+    method = root_config.method
     torch.cuda.set_device(get_free_gpu())
 
-    config = yaml.load(open(args.config), Loader=SafeLoader)[args.dataset]
-    print(config)
+    if root_config.use_wandb:
+        wandb.init(project=root_config.wandb_project)
+        wandb.config.update(cfg2dict(config))
+
+    print(OmegaConf.to_yaml(config))
+
     torch.manual_seed(config['seed'])
     random.seed(12345)
 
@@ -100,26 +115,26 @@ if __name__ == '__main__':
         else:
             return Planetoid(root=path, name=name, transform=T.NormalizeFeatures())
 
-    path = osp.join(osp.expanduser('~'), 'datasets', args.dataset)
-    dataset = get_dataset(path, args.dataset)
+    path = osp.join(osp.expanduser('~'), 'datasets', dataset_name)
+    dataset = get_dataset(path, dataset_name)
     data = dataset[0]
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     data = data.to(device)
 
-    if args.method == "recoverability":
+    if method == "recoverability":
         model = EncoderRecoverability(dataset.num_features, num_hidden, activation, base_model=base_model, k=num_layers, kernel_lmbda=float(config["kernel_lambda"])).to(device)
     else:
         encoder = Encoder(dataset.num_features, num_hidden, activation,
                           base_model=base_model, k=num_layers).to(device)
-        model = Model(encoder, num_hidden, num_proj_hidden,args.method, tau).to(device)
+        model = Model(encoder, num_hidden, num_proj_hidden, method, tau).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     start = t()
     prev = start
     for epoch in range(1, num_epochs + 1):
-        loss = train(model, data.x, data.edge_index, config["max_edges_for_r"])
+        loss = train(model, data.x, data.edge_index, config["max_edges_for_r"], optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2)
 
         now = t()
         print(f'(T) | Epoch={epoch:03d}, loss={loss:.4f}, '
@@ -128,3 +143,9 @@ if __name__ == '__main__':
 
     print("=== Final ===")
     test(model, data.x, data.edge_index, data.y, final=True)
+
+
+
+
+if __name__ == '__main__':
+    main()

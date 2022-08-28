@@ -1,6 +1,7 @@
 import numpy as np
 import functools
 
+import wandb
 from sklearn.metrics import f1_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, GridSearchCV
@@ -38,6 +39,9 @@ def print_statistics(statistics, function_name):
     for i, key in enumerate(statistics.keys()):
         mean = statistics[key]['mean']
         std = statistics[key]['std']
+        if wandb.run is not None:
+            wandb.log({f"{key}_mean": mean,
+                       f"{key}_std": std})
         print(f'{key}={mean:.4f}+-{std:.4f}', end='')
         if i != len(statistics.keys()) - 1:
             print(',', end=' ')
@@ -45,7 +49,7 @@ def print_statistics(statistics, function_name):
             print()
 
 
-@repeat(3)
+@repeat(10)
 def label_classification(embeddings, y, ratio):
     X = embeddings.detach().cpu().numpy()
     Y = y.detach().cpu().numpy()

@@ -49,7 +49,8 @@ class GaussianKernel:
         B_reduced = (B * B).sum(dim=-1).reshape(1, -1)  # row vector (1, num_samples)
         AB = A @ B.T  # (num_samples, num_samples)
         N = A_reduced + B_reduced - 2 * AB
-        return torch.exp(- N / (N.std().detach()))
+        kernel_lambda = self._kernel_lambda if self._kernel_lambda != 0 else N.mean().detach()
+        return torch.exp(- N / kernel_lambda)
 
     def compute_d(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         if self._max_samples > 0 and x.size(0) > self._max_samples:
