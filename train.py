@@ -6,50 +6,79 @@ from time import perf_counter as t
 from typing import Dict
 
 import hydra
+import torch_geometric
 import wandb
+from ogb.nodeproppred import PygNodePropPredDataset
 from omegaconf import DictConfig, OmegaConf
 import pandas as pd
 import torch
+torch.multiprocessing.set_sharing_strategy('file_system')
 import torch_geometric.transforms as T
 import torch.nn.functional as F
 import torch.nn as nn
-from torch_geometric.datasets import Planetoid, CitationFull
+from torch_geometric.datasets import Planetoid, CitationFull, Reddit2
+from torch_geometric.loader import ClusterData, ClusterLoader
 from torch_geometric.utils import dropout_adj
 from torch_geometric.nn import GCNConv
 
 from model import Encoder, Model, drop_feature, EncoderRecoverability
-from eval import label_classification
+from eval import label_classification_grace
 
 
-def train(model: Model, x, edge_index, max_edges_for_r, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2):
+def train(model: Model, data, max_edges_for_r, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2):
     model.train()
-    optimizer.zero_grad()
-    if isinstance(model, EncoderRecoverability):
-        h = model(x, edge_index)
-        loss = model.loss(x, h, edge_index, max_edges_for_r)
-    else:
-        edge_index_1 = dropout_adj(edge_index, p=drop_edge_rate_1)[0]
-        edge_index_2 = dropout_adj(edge_index, p=drop_edge_rate_2)[0]
-        x_1 = drop_feature(x, drop_feature_rate_1)
-        x_2 = drop_feature(x, drop_feature_rate_2)
-        z1 = model(x_1, edge_index_1)
-        z2 = model(x_2, edge_index_2)
+    total_nodes = 0
+    total_loss = 0
+    for curr_data in data:
+        x, edge_index = curr_data.x.cuda(), curr_data.edge_index.cuda()
+        optimizer.zero_grad()
+        if isinstance(model, EncoderRecoverability):
+            h = model(x, edge_index)
+            loss = model.loss(x, h, edge_index, max_edges_for_r)
+        else:
+            edge_index_1 = dropout_adj(edge_index, p=drop_edge_rate_1)[0]
+            edge_index_2 = dropout_adj(edge_index, p=drop_edge_rate_2)[0]
+            x_1 = drop_feature(x, drop_feature_rate_1)
+            x_2 = drop_feature(x, drop_feature_rate_2)
+            z1 = model(x_1, edge_index_1)
+            z2 = model(x_2, edge_index_2)
 
-        loss = model.loss(z1, z2, batch_size=0)
-    loss.backward()
-    optimizer.step()
+            loss = model.loss(z1, z2, batch_size=0)
+        loss.backward()
+        optimizer.step()
+        total_nodes += x.size(0)
+        total_loss += loss.item() * x.size(0)
 
-    return loss.item()
+    loss_avg = total_loss / total_nodes
+
+    return loss_avg
 
 
-def test(model: Model, x, edge_index, y, final=False):
-    model.eval()
-    z = model(x, edge_index)
+def test(model: Model, data: torch_geometric.data.Data):
+    with torch.no_grad():
+        model.eval()
+        y_train_agg = []
+        y_test_agg = []
+        z_train_agg = []
+        z_test_agg = []
 
-    if isinstance(model, EncoderRecoverability):
-        z = z[-1]
+        for curr_data in data:
+            x, edge_index, y, test_mask = curr_data.x.cuda(), curr_data.edge_index.cuda(), curr_data.y.cuda(), curr_data.test_mask.cuda()
+            z = model(x, edge_index)
+            if isinstance(model, EncoderRecoverability):
+                z = z[-1]
+            z_train_agg.append(z[~test_mask].cpu())
+            z_test_agg.append(z[test_mask].cpu())
+            y_train_agg.append(y[~test_mask].cpu())
+            y_test_agg.append(y[test_mask].cpu())
 
-    label_classification(z, y, ratio=0.1)
+        z_train = torch.cat(z_train_agg).numpy()
+        z_test = torch.cat(z_test_agg).numpy()
+        y_train = torch.cat(y_train_agg).numpy()
+        y_test = torch.cat(y_test_agg).numpy()
+
+    #label_classification_dgi(z_train, z_test, y_train, y_test)
+    label_classification_grace(z_train, z_test, y_train, y_test)
 
 
 def get_free_gpu():
@@ -74,6 +103,17 @@ def cfg2dict(cfg: DictConfig) -> Dict:
         else:
             cfg_dict[k] = v
     return cfg_dict
+
+
+def cluster_data(data: torch_geometric.data.Data, num_clusters: int):
+    cluster_data = ClusterData(data, num_parts=num_clusters, recursive=False,
+                               save_dir=None)
+    loader = ClusterLoader(cluster_data,
+                           batch_size=1,
+                           shuffle=True,
+                           num_workers=4)
+    data = [d for d in loader]
+    return data
 
 @hydra.main(config_path="configs", config_name="default")  # Config name will be given via command line
 def main(root_config: DictConfig):
@@ -107,34 +147,53 @@ def main(root_config: DictConfig):
     weight_decay = config['weight_decay']
 
     def get_dataset(path, name):
-        assert name in ['Cora', 'CiteSeer', 'PubMed', 'DBLP']
+        assert name in ['Cora', 'CiteSeer', 'PubMed', 'DBLP', "Reddit2", "ogbn-arxiv", "ogbn-products"]
         name = 'dblp' if name == 'DBLP' else name
 
         if name == "dblp":
-            return CitationFull(root=path, name=name, transform=T.NormalizeFeatures())
+            data = CitationFull(root=path, name=name, transform=T.NormalizeFeatures())[0]
+        elif name in ("Cora", "CiteSeer", "PubMed"):
+            data = Planetoid(root=path, name=name, transform=T.NormalizeFeatures())[0]
+        elif name == "Reddit2":
+            data = Reddit2(root=path, transform=T.NormalizeFeatures())[0]
+        elif name in ("ogbn-arxiv", "ogbn-products"):
+            dataset = PygNodePropPredDataset(name=name,
+                                             root=path)
+            data = dataset[0]
+            split_idx = dataset.get_idx_split()
+            data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+            data.train_mask[split_idx["train"]] = True
+            data.val_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+            data.val_mask[split_idx["valid"]] = True
+            data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+            data.test_mask[split_idx["test"]] = True
+            data.y = data.y.flatten()
         else:
-            return Planetoid(root=path, name=name, transform=T.NormalizeFeatures())
+            raise ValueError(f"Invalid DS: {dataset_name}")
+
+        if config.num_data_splits > 1:
+            data = cluster_data(data, config.num_data_splits)
+        else:
+            data = [data]
+
+        return data
 
     path = osp.join(osp.expanduser('~'), 'datasets', dataset_name)
-    dataset = get_dataset(path, dataset_name)
-    data = dataset[0]
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    data = data.to(device)
+    data = get_dataset(path, dataset_name)
 
     if method == "recoverability":
-        model = EncoderRecoverability(dataset.num_features, num_hidden, activation, base_model=base_model, k=num_layers, kernel_lmbda=float(config["kernel_lambda"])).to(device)
+        model = EncoderRecoverability(data[0].x.size(-1), num_hidden, activation, base_model=base_model, k=num_layers, kernel_lmbda=float(config["kernel_lambda"])).cuda()
     else:
-        encoder = Encoder(dataset.num_features, num_hidden, activation,
-                          base_model=base_model, k=num_layers).to(device)
-        model = Model(encoder, num_hidden, num_proj_hidden, method, tau).to(device)
+        encoder = Encoder(data[0].x.size(-1), num_hidden, activation,
+                          base_model=base_model, k=num_layers).cuda()
+        model = Model(encoder, num_hidden, num_proj_hidden, method, tau).cuda()
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     start = t()
     prev = start
     for epoch in range(1, num_epochs + 1):
-        loss = train(model, data.x, data.edge_index, config["max_edges_for_r"], optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2)
+        loss = train(model, data, config["max_edges_for_r"], optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2)
 
         now = t()
         print(f'(T) | Epoch={epoch:03d}, loss={loss:.4f}, '
@@ -142,9 +201,7 @@ def main(root_config: DictConfig):
         prev = now
 
     print("=== Final ===")
-    test(model, data.x, data.edge_index, data.y, final=True)
-
-
+    test(model, data)
 
 
 if __name__ == '__main__':

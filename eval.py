@@ -1,6 +1,7 @@
 import numpy as np
 import functools
 
+import torch
 import wandb
 from sklearn.metrics import f1_score
 from sklearn.linear_model import LogisticRegression
@@ -49,18 +50,70 @@ def print_statistics(statistics, function_name):
             print()
 
 
-@repeat(10)
-def label_classification(embeddings, y, ratio):
-    X = embeddings.detach().cpu().numpy()
-    Y = y.detach().cpu().numpy()
-    Y = Y.reshape(-1, 1)
-    onehot_encoder = OneHotEncoder(categories='auto').fit(Y)
-    Y = onehot_encoder.transform(Y).toarray().astype(np.bool)
+@repeat(5)
+def label_classification_dgi(X_train, X_test, y_train, y_test):
+    class LogReg(torch.nn.Module):
+        def __init__(self, ft_in, nb_classes):
+            super(LogReg, self).__init__()
+            self.fc = torch.nn.Linear(ft_in, nb_classes)
 
-    X = normalize(X, norm='l2')
+            for m in self.modules():
+                self.weights_init(m)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, Y,
-                                                        test_size=1 - ratio)
+        def weights_init(self, m):
+            if isinstance(m, torch.nn.Linear):
+                torch.nn.init.xavier_uniform_(m.weight.data)
+                if m.bias is not None:
+                    m.bias.data.fill_(0.0)
+
+        def forward(self, seq):
+            ret = self.fc(seq)
+            return ret
+
+    xent = torch.nn.CrossEntropyLoss()
+
+    X_train = torch.from_numpy(X_train).cuda()
+    X_test = torch.from_numpy(X_test).cuda()
+    y_train = torch.from_numpy(y_train).cuda()
+    y_test = torch.from_numpy(y_test).cuda()
+
+    nb_classes = torch.max(torch.cat([y_train, y_test])).item() + 1
+    log = LogReg(X_train.size(1), nb_classes).cuda()
+    opt = torch.optim.Adam(log.parameters(), lr=0.01, weight_decay=0.0)
+
+    for _ in range(100):
+        log.train()
+        opt.zero_grad()
+
+        logits = log(X_train)
+        loss = xent(logits, y_train)
+
+        loss.backward()
+        opt.step()
+
+    with torch.no_grad():
+        log.eval()
+        logits = log(X_test)
+        preds = torch.argmax(logits, dim=1)
+        micro = f1_score(y_test.cpu().numpy(), preds.cpu().numpy(), average="micro")
+        macro = f1_score(y_test.cpu().numpy(), preds.cpu().numpy(), average="macro")
+
+    return {
+        'F1Mi': micro,
+        'F1Ma': macro
+    }
+
+
+@repeat(5)
+def label_classification_grace(X_train, X_test, y_train, y_test):
+    y_train = y_train.reshape(-1, 1)
+    y_test = y_test.reshape(-1, 1)
+    onehot_encoder = OneHotEncoder(categories='auto').fit(np.concatenate([y_train, y_test]))
+    y_train = onehot_encoder.transform(y_train).toarray().astype(np.bool)
+    y_test = onehot_encoder.transform(y_test).toarray().astype(np.bool)
+
+    X_train = normalize(X_train, norm='l2')
+    X_test = normalize(X_test, norm='l2')
 
     logreg = LogisticRegression(solver='liblinear')
     c = 2.0 ** np.arange(-10, 10)

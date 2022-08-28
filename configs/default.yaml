@@ -19,6 +19,7 @@ Cora:
   weight_decay: 0.00001
   max_edges_for_r: 2048
   kernel_lambda: 1e-3
+  num_data_splits: 1
 CiteSeer:
   seed: 38108
   learning_rate: 0.00001
@@ -36,6 +37,7 @@ CiteSeer:
   weight_decay: 0.00001
   max_edges_for_r: 2048
   kernel_lambda: 1e-3
+  num_data_splits: 1
 PubMed:
   seed: 23344
   learning_rate: 0.00001
@@ -53,6 +55,7 @@ PubMed:
   weight_decay: 0.00001
   max_edges_for_r: 2048
   kernel_lambda: 1e-3
+  num_data_splits: 1
 DBLP:
   seed: 83521
   learning_rate: 0.00001
@@ -70,3 +73,58 @@ DBLP:
   weight_decay: 0.00001
   max_edges_for_r: 2048
   kernel_lambda: 1e-3
+  num_data_splits: 1
+Reddit2:
+  seed: 23344
+  learning_rate: 0.00001
+  num_hidden: 256
+  num_proj_hidden: 256
+  activation: 'relu'
+  base_model: 'GCNConv'
+  num_layers: 2
+  drop_edge_rate_1: 0.4
+  drop_edge_rate_2: 0.1
+  drop_feature_rate_1: 0.0
+  drop_feature_rate_2: 0.2
+  tau: 0.7
+  num_epochs: 100
+  weight_decay: 0.00001
+  max_edges_for_r: 2048
+  kernel_lambda: 1e-3
+  num_data_splits: 128
+ogbn-arxiv:
+  seed: 23344
+  learning_rate: 0.00001
+  num_hidden: 256
+  num_proj_hidden: 256
+  activation: 'relu'
+  base_model: 'GCNConv'
+  num_layers: 2
+  drop_edge_rate_1: 0.4
+  drop_edge_rate_2: 0.1
+  drop_feature_rate_1: 0.0
+  drop_feature_rate_2: 0.2
+  tau: 0.7
+  num_epochs: 100
+  weight_decay: 0.00001
+  max_edges_for_r: 2048
+  kernel_lambda: 1e-3
+  num_data_splits: 64
+ogbn-products:
+  seed: 23344
+  learning_rate: 0.00001
+  num_hidden: 256
+  num_proj_hidden: 256
+  activation: 'relu'
+  base_model: 'GCNConv'
+  num_layers: 2
+  drop_edge_rate_1: 0.4
+  drop_edge_rate_2: 0.1
+  drop_feature_rate_1: 0.0
+  drop_feature_rate_2: 0.2
+  tau: 0.7
+  num_epochs: 100
+  weight_decay: 0.00001
+  max_edges_for_r: 2048
+  kernel_lambda: 1e-3
+  num_data_splits: 1024
