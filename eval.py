@@ -120,7 +120,7 @@ def label_classification_grace(X_train, X_test, y_train, y_test):
 
     clf = GridSearchCV(estimator=OneVsRestClassifier(logreg),
                        param_grid=dict(estimator__C=c), n_jobs=8, cv=5,
-                       verbose=0)
+                       verbose=1)
     clf.fit(X_train, y_train)
 
     y_pred = clf.predict_proba(X_test)

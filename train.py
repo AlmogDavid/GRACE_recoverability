@@ -4,14 +4,16 @@ import subprocess
 from io import StringIO
 from time import perf_counter as t
 from typing import Dict
-
 import hydra
 import torch_geometric
 import wandb
+import numpy as np
 from ogb.nodeproppred import PygNodePropPredDataset
 from omegaconf import DictConfig, OmegaConf
 import pandas as pd
 import torch
+from sklearn.model_selection import train_test_split
+
 torch.multiprocessing.set_sharing_strategy('file_system')
 import torch_geometric.transforms as T
 import torch.nn.functional as F
@@ -152,6 +154,18 @@ def main(root_config: DictConfig):
 
         if name == "dblp":
             data = CitationFull(root=path, name=name, transform=T.NormalizeFeatures())[0]
+            # There is no split, so we perform random split
+            node_idx = np.arange(data.x.size(0))
+            labels = data.y
+            idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
+                                                                test_size=0.2)
+            train_mask = torch.zeros_like(data.y, dtype=torch.bool)
+            train_mask[idx_train] = True
+            test_mask = torch.zeros_like(train_mask)
+            test_mask[idx_test] = True
+            data.train_mask = train_mask
+            data.test_mask = test_mask
+
         elif name in ("Cora", "CiteSeer", "PubMed"):
             data = Planetoid(root=path, name=name, transform=T.NormalizeFeatures())[0]
         elif name == "Reddit2":
