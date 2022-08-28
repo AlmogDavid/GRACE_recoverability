@@ -1,10 +1,12 @@
 import argparse
 import os.path as osp
 import random
+import subprocess
+from io import StringIO
 from time import perf_counter as t
 import yaml
 from yaml import SafeLoader
-
+import pandas as pd
 import torch
 import torch_geometric.transforms as T
 import torch.nn.functional as F
@@ -13,21 +15,25 @@ from torch_geometric.datasets import Planetoid, CitationFull
 from torch_geometric.utils import dropout_adj
 from torch_geometric.nn import GCNConv
 
-from model import Encoder, Model, drop_feature
+from model import Encoder, Model, drop_feature, EncoderRecoverability
 from eval import label_classification
 
 
-def train(model: Model, x, edge_index):
+def train(model: Model, x, edge_index, max_edges_for_r):
     model.train()
     optimizer.zero_grad()
-    edge_index_1 = dropout_adj(edge_index, p=drop_edge_rate_1)[0]
-    edge_index_2 = dropout_adj(edge_index, p=drop_edge_rate_2)[0]
-    x_1 = drop_feature(x, drop_feature_rate_1)
-    x_2 = drop_feature(x, drop_feature_rate_2)
-    z1 = model(x_1, edge_index_1)
-    z2 = model(x_2, edge_index_2)
+    if isinstance(model, EncoderRecoverability):
+        h = model(x, edge_index)
+        loss = model.loss(x, h, edge_index, max_edges_for_r)
+    else:
+        edge_index_1 = dropout_adj(edge_index, p=drop_edge_rate_1)[0]
+        edge_index_2 = dropout_adj(edge_index, p=drop_edge_rate_2)[0]
+        x_1 = drop_feature(x, drop_feature_rate_1)
+        x_2 = drop_feature(x, drop_feature_rate_2)
+        z1 = model(x_1, edge_index_1)
+        z2 = model(x_2, edge_index_2)
 
-    loss = model.loss(z1, z2, batch_size=0)
+        loss = model.loss(z1, z2, batch_size=0)
     loss.backward()
     optimizer.step()
 
@@ -38,21 +44,35 @@ def test(model: Model, x, edge_index, y, final=False):
     model.eval()
     z = model(x, edge_index)
 
+    if isinstance(model, EncoderRecoverability):
+        z = z[-1]
+
     label_classification(z, y, ratio=0.1)
+
+
+def get_free_gpu():
+    gpu_stats = subprocess.check_output(["nvidia-smi", "--format=csv", "--query-gpu=memory.used,memory.free"])
+    gpu_df = pd.read_csv(StringIO(gpu_stats.decode()),
+                         names=['memory.used', 'memory.free'],
+                         skiprows=1)
+    print('GPU usage:\n{}'.format(gpu_df))
+    gpu_df['memory.free'] = gpu_df['memory.free'].map(lambda x: int(x.rstrip(' [MiB]')))
+    idx = gpu_df['memory.free'].idxmax()
+    print('The most free is GPU={} with {} free MiB'.format(idx, gpu_df.iloc[idx]['memory.free']))
+    return idx
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='DBLP')
-    parser.add_argument('--gpu_id', type=int, default=0)
     parser.add_argument('--config', type=str, default='config.yaml')
+    parser.add_argument('--method', choices=("recoverability", "GRACE"), required=True)
     args = parser.parse_args()
 
-    assert args.gpu_id in range(0, 8)
-    torch.cuda.set_device(args.gpu_id)
+    torch.cuda.set_device(get_free_gpu())
 
     config = yaml.load(open(args.config), Loader=SafeLoader)[args.dataset]
-
+    print(config)
     torch.manual_seed(config['seed'])
     random.seed(12345)
 
@@ -75,10 +95,10 @@ if __name__ == '__main__':
         assert name in ['Cora', 'CiteSeer', 'PubMed', 'DBLP']
         name = 'dblp' if name == 'DBLP' else name
 
-        return (CitationFull if name == 'dblp' else Planetoid)(
-            path,
-            name,
-            T.NormalizeFeatures())
+        if name == "dblp":
+            return CitationFull(root=path, name=name, transform=T.NormalizeFeatures())
+        else:
+            return Planetoid(root=path, name=name, transform=T.NormalizeFeatures())
 
     path = osp.join(osp.expanduser('~'), 'datasets', args.dataset)
     dataset = get_dataset(path, args.dataset)
@@ -87,16 +107,19 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     data = data.to(device)
 
-    encoder = Encoder(dataset.num_features, num_hidden, activation,
-                      base_model=base_model, k=num_layers).to(device)
-    model = Model(encoder, num_hidden, num_proj_hidden, tau).to(device)
+    if args.method == "recoverability":
+        model = EncoderRecoverability(dataset.num_features, num_hidden, activation, base_model=base_model, k=num_layers, kernel_lmbda=float(config["kernel_lambda"])).to(device)
+    else:
+        encoder = Encoder(dataset.num_features, num_hidden, activation,
+                          base_model=base_model, k=num_layers).to(device)
+        model = Model(encoder, num_hidden, num_proj_hidden,args.method, tau).to(device)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     start = t()
     prev = start
     for epoch in range(1, num_epochs + 1):
-        loss = train(model, data.x, data.edge_index)
+        loss = train(model, data.x, data.edge_index, config["max_edges_for_r"])
 
         now = t()
         print(f'(T) | Epoch={epoch:03d}, loss={loss:.4f}, '
