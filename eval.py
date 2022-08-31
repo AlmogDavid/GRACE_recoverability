@@ -3,7 +3,7 @@ import functools
 
 import torch
 import wandb
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.multiclass import OneVsRestClassifier
@@ -106,10 +106,12 @@ def label_classification_dgi(X_train, X_test, y_train, y_test):
         preds = torch.cat(preds)
         micro = f1_score(y_test.cpu().numpy(), preds.cpu().numpy(), average="micro")
         macro = f1_score(y_test.cpu().numpy(), preds.cpu().numpy(), average="macro")
+        accuracy = accuracy_score(y_test.cpu().numpy(), preds.cpu().numpy())
 
     return {
         'F1Mi': micro,
-        'F1Ma': macro
+        'F1Ma': macro,
+        "Accuracy": accuracy,
     }
 
 
@@ -141,8 +143,10 @@ def label_classification_grace(X_train, X_test, y_train, y_test):
 
     micro = f1_score(y_test, y_pred, average="micro")
     macro = f1_score(y_test, y_pred, average="macro")
+    accuracy = accuracy_score(y_test, y_pred)
 
     return {
         'F1Mi': micro,
-        'F1Ma': macro
+        'F1Ma': macro,
+        'Accuracy': accuracy
     }

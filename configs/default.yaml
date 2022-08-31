@@ -4,6 +4,25 @@ use_wandb: false
 wandb_project: GRACE_recoverability
 Cora:
   seed: 39788
+  learning_rate: 0.00005
+  num_hidden: 512
+  num_proj_hidden: 128
+  activation: 'relu'
+  base_model: 'GCNConv'
+  num_layers: 4
+  drop_edge_rate_1: 0.2
+  drop_edge_rate_2: 0.4
+  drop_feature_rate_1: 0.3
+  drop_feature_rate_2: 0.4
+  tau: 0.4
+  num_epochs: 100
+  weight_decay: 0.00001
+  max_edges_for_r: 2048
+  kernel_lambda: 1
+  num_data_splits: 1
+  eval_method: GRACE
+amazon_photos:
+  seed: 39788
   learning_rate: 0.00001
   num_hidden: 256
   num_proj_hidden: 128

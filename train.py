@@ -18,7 +18,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 import torch_geometric.transforms as T
 import torch.nn.functional as F
 import torch.nn as nn
-from torch_geometric.datasets import Planetoid, CitationFull, Reddit2, PPI, Reddit
+from torch_geometric.datasets import Planetoid, CitationFull, Reddit2, PPI, Reddit, Amazon
 from torch_geometric.loader import ClusterData, ClusterLoader
 from torch_geometric.utils import dropout_adj
 from torch_geometric.nn import GCNConv
@@ -121,6 +121,7 @@ def cluster_data(data: torch_geometric.data.Data, num_clusters: int):
     data = [d for d in loader]
     return data
 
+
 @hydra.main(config_path="configs", config_name="default")  # Config name will be given via command line
 def main(root_config: DictConfig):
     dataset_name = root_config.dataset
@@ -155,7 +156,6 @@ def main(root_config: DictConfig):
     weight_decay = config['weight_decay']
 
     def get_dataset(path, name):
-        assert name in ['Cora', 'CiteSeer', 'PubMed', 'DBLP', "Reddit2", "ogbn_arxiv", "ogbn_products", "PPI", "Reddit"]
         name = 'dblp' if name == 'DBLP' else name
 
         if name == "dblp":
@@ -175,7 +175,7 @@ def main(root_config: DictConfig):
             data = Planetoid(root=path, name=name, transform=T.NormalizeFeatures())[0]
         elif name == "Reddit2":
             data = Reddit2(root=path)[0]  # Remove the first 2 features because there are in different scale
-            data.x = data.x[:,2:]
+            data.x = data.x[:, 2:]
             data = T.NormalizeFeatures()(data)
         elif name == "Reddit":
             data = Reddit(root=path)[0]  # Remove the first 2 features because there are in different scale
@@ -213,6 +213,18 @@ def main(root_config: DictConfig):
 
             # Merge graphs
             data = data_map["train_mask"] + data_map["val_mask"] + data_map["test_mask"]
+        elif name == "amazon_photos":
+            data = Amazon(root=path, name="photo", transform=T.NormalizeFeatures())[0]
+            node_idx = np.arange(data.x.size(0))
+            labels = data.y
+            idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
+                                                         test_size=0.2)
+            train_mask = torch.zeros_like(data.y, dtype=torch.bool)
+            train_mask[idx_train] = True
+            test_mask = torch.zeros_like(train_mask)
+            test_mask[idx_test] = True
+            data.train_mask = train_mask
+            data.test_mask = test_mask
         else:
             raise ValueError(f"Invalid DS: {dataset_name}")
 
