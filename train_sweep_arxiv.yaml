@@ -1,0 +1,30 @@
+program: train.py
+project: "GRACE_recoverability_hps"
+name: "OGBN-ARXIV_recoverability"
+method: bayes
+metric:
+  goal: maximize
+  name: F1Mi_mean
+parameters:
+  use_wandb:
+    values: [ true ]
+  dataset:
+    values: ["ogbn_arxiv"]
+  method:
+    values: ["recoverability"]
+  ogbn_arxiv.learning_rate:
+    values: [1e-4, 5e-5, 1e-5, 5e-6, 1e-6]
+  ogbn_arxiv.num_hidden:
+    values: [128, 256, 512]
+  ogbn_arxiv.num_layers:
+    values: [2, 4]
+  ogbn_arxiv.kernel_lambda:
+    values: [100, 10, 1, 0, 1e-2, 1e-3, 1e-4, 1e-5]
+  ogbn_arxiv.num_epochs:
+    values: [100]
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}

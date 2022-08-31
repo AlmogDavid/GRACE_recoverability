@@ -8,6 +8,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.preprocessing import normalize, OneHotEncoder
+import torch.nn.functional as F
 
 
 def repeat(n_times):
@@ -50,51 +51,59 @@ def print_statistics(statistics, function_name):
             print()
 
 
-@repeat(5)
+@repeat(10)
 def label_classification_dgi(X_train, X_test, y_train, y_test):
     class LogReg(torch.nn.Module):
         def __init__(self, ft_in, nb_classes):
             super(LogReg, self).__init__()
-            self.fc = torch.nn.Linear(ft_in, nb_classes)
-
-            for m in self.modules():
-                self.weights_init(m)
-
-        def weights_init(self, m):
-            if isinstance(m, torch.nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight.data)
-                if m.bias is not None:
-                    m.bias.data.fill_(0.0)
+            self.fc0 = torch.nn.Linear(ft_in, ft_in)
+            self.fc1 = torch.nn.Linear(ft_in, nb_classes)
 
         def forward(self, seq):
-            ret = self.fc(seq)
+            ret = F.leaky_relu(self.fc0(seq))
+            ret = self.fc1(ret)
             return ret
 
-    xent = torch.nn.CrossEntropyLoss()
+    if y_train.ndim > 1 and y_train.shape[1] > 1: # Multi label DS
+        criterion = torch.nn.BCEWithLogitsLoss()
+        nb_classes = y_train.shape[1]
+        multi_label = True
+    else:
+        criterion = torch.nn.CrossEntropyLoss()
+        nb_classes = np.max(np.concatenate([y_train, y_test])) + 1
+        multi_label = False
 
     X_train = torch.from_numpy(X_train).cuda()
     X_test = torch.from_numpy(X_test).cuda()
     y_train = torch.from_numpy(y_train).cuda()
     y_test = torch.from_numpy(y_test).cuda()
 
-    nb_classes = torch.max(torch.cat([y_train, y_test])).item() + 1
     log = LogReg(X_train.size(1), nb_classes).cuda()
-    opt = torch.optim.Adam(log.parameters(), lr=0.01, weight_decay=0.0)
+    opt = torch.optim.Adam(log.parameters(), lr=0.001, weight_decay=0.0)
 
-    for _ in range(100):
+    for _ in range(1000):
         log.train()
-        opt.zero_grad()
+        perm = torch.randperm(y_train.size(0)).cuda().type(torch.long)
+        X_train = X_train[perm]
+        y_train = y_train[perm]
+        for curr_x, curr_y in zip(torch.split(X_train, 1024), torch.split(y_train, 1024)):
+            opt.zero_grad()
+            logits = log(curr_x)
+            loss = criterion(logits, curr_y)
 
-        logits = log(X_train)
-        loss = xent(logits, y_train)
-
-        loss.backward()
-        opt.step()
+            loss.backward()
+            opt.step()
 
     with torch.no_grad():
         log.eval()
-        logits = log(X_test)
-        preds = torch.argmax(logits, dim=1)
+        preds = []
+        for curr_x in torch.split(X_test, 1024):
+            logits = log(curr_x)
+            if multi_label:
+                preds.append((logits > 0))
+            else:
+                preds.append(torch.argmax(logits, dim=1))
+        preds = torch.cat(preds)
         micro = f1_score(y_test.cpu().numpy(), preds.cpu().numpy(), average="micro")
         macro = f1_score(y_test.cpu().numpy(), preds.cpu().numpy(), average="macro")
 
@@ -104,13 +113,17 @@ def label_classification_dgi(X_train, X_test, y_train, y_test):
     }
 
 
-@repeat(5)
+@repeat(3)
 def label_classification_grace(X_train, X_test, y_train, y_test):
-    y_train = y_train.reshape(-1, 1)
-    y_test = y_test.reshape(-1, 1)
-    onehot_encoder = OneHotEncoder(categories='auto').fit(np.concatenate([y_train, y_test]))
-    y_train = onehot_encoder.transform(y_train).toarray().astype(np.bool)
-    y_test = onehot_encoder.transform(y_test).toarray().astype(np.bool)
+    if y_train.ndim > 1 and y_train.shape[1] > 1: # Multi label DS
+        y_train = y_train.astype(np.bool)
+        y_test = y_test.astype(np.bool)
+    else:
+        y_train = y_train.reshape(-1, 1)
+        y_test = y_test.reshape(-1, 1)
+        onehot_encoder = OneHotEncoder(categories='auto').fit(np.concatenate([y_train, y_test]))
+        y_train = onehot_encoder.transform(y_train).toarray().astype(np.bool)
+        y_test = onehot_encoder.transform(y_test).toarray().astype(np.bool)
 
     X_train = normalize(X_train, norm='l2')
     X_test = normalize(X_test, norm='l2')

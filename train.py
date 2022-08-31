@@ -18,13 +18,13 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 import torch_geometric.transforms as T
 import torch.nn.functional as F
 import torch.nn as nn
-from torch_geometric.datasets import Planetoid, CitationFull, Reddit2
+from torch_geometric.datasets import Planetoid, CitationFull, Reddit2, PPI, Reddit
 from torch_geometric.loader import ClusterData, ClusterLoader
 from torch_geometric.utils import dropout_adj
 from torch_geometric.nn import GCNConv
 
 from model import Encoder, Model, drop_feature, EncoderRecoverability
-from eval import label_classification_grace
+from eval import label_classification_grace, label_classification_dgi
 
 
 def train(model: Model, data, max_edges_for_r, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2):
@@ -56,7 +56,7 @@ def train(model: Model, data, max_edges_for_r, optimizer, drop_edge_rate_1, drop
     return loss_avg
 
 
-def test(model: Model, data: torch_geometric.data.Data):
+def test(model: Model, data: torch_geometric.data.Data, eval_method: str):
     with torch.no_grad():
         model.eval()
         y_train_agg = []
@@ -79,8 +79,12 @@ def test(model: Model, data: torch_geometric.data.Data):
         y_train = torch.cat(y_train_agg).numpy()
         y_test = torch.cat(y_test_agg).numpy()
 
-    #label_classification_dgi(z_train, z_test, y_train, y_test)
-    label_classification_grace(z_train, z_test, y_train, y_test)
+    if eval_method == "DGI":
+        label_classification_dgi(z_train, z_test, y_train, y_test)
+    elif eval_method == "GRACE":
+        label_classification_grace(z_train, z_test, y_train, y_test)
+    else:
+        raise RuntimeError("Invalid classification method")
 
 
 def get_free_gpu():
@@ -121,6 +125,8 @@ def cluster_data(data: torch_geometric.data.Data, num_clusters: int):
 def main(root_config: DictConfig):
     dataset_name = root_config.dataset
     config = root_config[dataset_name] # Load the relevant part
+    assert config["eval_method"] in ("GRACE", "DGI")
+
     method = root_config.method
     torch.cuda.set_device(get_free_gpu())
 
@@ -149,7 +155,7 @@ def main(root_config: DictConfig):
     weight_decay = config['weight_decay']
 
     def get_dataset(path, name):
-        assert name in ['Cora', 'CiteSeer', 'PubMed', 'DBLP', "Reddit2", "ogbn-arxiv", "ogbn-products"]
+        assert name in ['Cora', 'CiteSeer', 'PubMed', 'DBLP', "Reddit2", "ogbn_arxiv", "ogbn_products", "PPI", "Reddit"]
         name = 'dblp' if name == 'DBLP' else name
 
         if name == "dblp":
@@ -165,14 +171,19 @@ def main(root_config: DictConfig):
             test_mask[idx_test] = True
             data.train_mask = train_mask
             data.test_mask = test_mask
-
         elif name in ("Cora", "CiteSeer", "PubMed"):
             data = Planetoid(root=path, name=name, transform=T.NormalizeFeatures())[0]
         elif name == "Reddit2":
-            data = Reddit2(root=path, transform=T.NormalizeFeatures())[0]
-        elif name in ("ogbn-arxiv", "ogbn-products"):
-            dataset = PygNodePropPredDataset(name=name,
-                                             root=path)
+            data = Reddit2(root=path)[0]  # Remove the first 2 features because there are in different scale
+            data.x = data.x[:,2:]
+            data = T.NormalizeFeatures()(data)
+        elif name == "Reddit":
+            data = Reddit(root=path)[0]  # Remove the first 2 features because there are in different scale
+            data.x = data.x[:, 2:]
+            data = T.NormalizeFeatures()(data)
+        elif name in ("ogbn_arxiv", "ogbn_products"):
+            dataset = PygNodePropPredDataset(name=name.replace("_", "-"),
+                                             root=path.replace("_","-"))
             data = dataset[0]
             split_idx = dataset.get_idx_split()
             data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
@@ -182,12 +193,32 @@ def main(root_config: DictConfig):
             data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
             data.test_mask[split_idx["test"]] = True
             data.y = data.y.flatten()
+            data.edge_index = torch_geometric.utils.to_undirected(data.edge_index, None, num_nodes=data.x.size(0))
+        elif name == "PPI":
+            train_ds = PPI(root=path, split="train")
+            val_ds = PPI(root=path, split="val")
+            test_ds = PPI(root=path, split="test")
+
+            # Build masks
+            data_map = {"train_mask": [],
+                        "val_mask": [],
+                        "test_mask": []}
+            for curr_ds, relevant_mask in ((train_ds, "train_mask"), (val_ds, "val_mask"), (test_ds, "test_mask")):
+                for data in curr_ds:
+                    data.val_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+                    data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+                    data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+                    setattr(data, relevant_mask, torch.ones((data.x.size(0),), dtype=torch.bool))
+                    data_map[relevant_mask].append(data)
+
+            # Merge graphs
+            data = data_map["train_mask"] + data_map["val_mask"] + data_map["test_mask"]
         else:
             raise ValueError(f"Invalid DS: {dataset_name}")
 
         if config.num_data_splits > 1:
             data = cluster_data(data, config.num_data_splits)
-        else:
+        elif isinstance(data, torch_geometric.data.Data):
             data = [data]
 
         return data
@@ -215,7 +246,7 @@ def main(root_config: DictConfig):
         prev = now
 
     print("=== Final ===")
-    test(model, data)
+    test(model, data, config['eval_method'])
 
 
 if __name__ == '__main__':
