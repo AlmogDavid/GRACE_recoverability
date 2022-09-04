@@ -23,8 +23,8 @@ Cora:
   eval_method: GRACE
 amazon_photos:
   seed: 39788
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.0001
+  num_hidden: 512
   num_proj_hidden: 128
   activation: 'relu'
   base_model: 'GCNConv'
@@ -37,13 +37,13 @@ amazon_photos:
   num_epochs: 100
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 0.01
   num_data_splits: 1
   eval_method: GRACE
 PPI:
   seed: 39788
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.000001
+  num_hidden: 512
   num_proj_hidden: 128
   activation: 'relu'
   base_model: 'GCNConv'
@@ -56,13 +56,13 @@ PPI:
   num_epochs: 100
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 0.00001
   num_data_splits: 1
   eval_method: DGI
 CiteSeer:
   seed: 38108
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.00005
+  num_hidden: 512
   num_proj_hidden: 256
   activation: 'prelu'
   base_model: 'GCNConv'
@@ -75,13 +75,13 @@ CiteSeer:
   num_epochs: 200
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 1
   num_data_splits: 1
   eval_method: GRACE
 PubMed:
   seed: 23344
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.00005
+  num_hidden: 512
   num_proj_hidden: 256
   activation: 'relu'
   base_model: 'GCNConv'
@@ -94,17 +94,17 @@ PubMed:
   num_epochs: 1500
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 1
   num_data_splits: 1
   eval_method: GRACE
 DBLP:
   seed: 83521
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.00005
+  num_hidden: 512
   num_proj_hidden: 256
   activation: 'relu'
   base_model: 'GCNConv'
-  num_layers: 2
+  num_layers: 4
   drop_edge_rate_1: 0.1
   drop_edge_rate_2: 0.4
   drop_feature_rate_1: 0.1
@@ -113,13 +113,13 @@ DBLP:
   num_epochs: 1000
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 0
   num_data_splits: 1
   eval_method: GRACE
 Reddit2:
   seed: 23344
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.000001
+  num_hidden: 512
   num_proj_hidden: 256
   activation: 'relu'
   base_model: 'GCNConv'
@@ -132,13 +132,13 @@ Reddit2:
   num_epochs: 100
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 100
   num_data_splits: 128
   eval_method: DGI
 Reddit:
   seed: 23344
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.000001
+  num_hidden: 512
   num_proj_hidden: 256
   activation: 'relu'
   base_model: 'GCNConv'
@@ -151,12 +151,12 @@ Reddit:
   num_epochs: 100
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 100
   num_data_splits: 128
   eval_method: DGI
 ogbn_arxiv:
   seed: 23344
-  learning_rate: 0.00001
+  learning_rate: 0.000005
   num_hidden: 256
   num_proj_hidden: 256
   activation: 'relu'
@@ -170,13 +170,13 @@ ogbn_arxiv:
   num_epochs: 100
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 0
   num_data_splits: 64
   eval_method: DGI
 ogbn_products:
   seed: 23344
-  learning_rate: 0.00001
-  num_hidden: 256
+  learning_rate: 0.0001
+  num_hidden: 512
   num_proj_hidden: 256
   activation: 'relu'
   base_model: 'GCNConv'
@@ -186,9 +186,9 @@ ogbn_products:
   drop_feature_rate_1: 0.0
   drop_feature_rate_2: 0.2
   tau: 0.7
-  num_epochs: 4
+  num_epochs: 2
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 1e-3
+  kernel_lambda: 0
   num_data_splits: 1024
   eval_method: DGI
