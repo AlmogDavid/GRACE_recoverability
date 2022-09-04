@@ -10,6 +10,8 @@ from sklearn.multiclass import OneVsRestClassifier
 from sklearn.preprocessing import normalize, OneHotEncoder
 import torch.nn.functional as F
 
+from model import LogReg
+
 
 def repeat(n_times):
     def decorator(f):
@@ -52,17 +54,20 @@ def print_statistics(statistics, function_name):
 
 
 @repeat(10)
-def label_classification_dgi(X_train, X_test, y_train, y_test):
-    class LogReg(torch.nn.Module):
-        def __init__(self, ft_in, nb_classes):
-            super(LogReg, self).__init__()
-            self.fc0 = torch.nn.Linear(ft_in, ft_in)
-            self.fc1 = torch.nn.Linear(ft_in, nb_classes)
+def label_classification_supervised(preds_test, y_test):
+    preds_test = np.argmax(preds_test, axis=1)
+    micro = f1_score(y_test, preds_test, average="micro")
+    macro = f1_score(y_test, preds_test, average="macro")
+    accuracy = accuracy_score(y_test, preds_test)
 
-        def forward(self, seq):
-            ret = F.leaky_relu(self.fc0(seq))
-            ret = self.fc1(ret)
-            return ret
+    return {
+        'F1Mi': micro,
+        'F1Ma': macro,
+        "Accuracy": accuracy,
+    }
+
+@repeat(10)
+def label_classification_dgi(X_train, X_test, y_train, y_test):
 
     if y_train.ndim > 1 and y_train.shape[1] > 1: # Multi label DS
         criterion = torch.nn.BCEWithLogitsLoss()
@@ -115,7 +120,7 @@ def label_classification_dgi(X_train, X_test, y_train, y_test):
     }
 
 
-@repeat(3)
+@repeat(10)
 def label_classification_grace(X_train, X_test, y_train, y_test):
     if y_train.ndim > 1 and y_train.shape[1] > 1: # Multi label DS
         y_train = y_train.astype(np.bool)

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -6,25 +6,6 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
 
 from gaussian_kernel import GaussianKernel
-
-
-class LogReg(nn.Module):
-    def __init__(self, ft_in, nb_classes):
-        super(LogReg, self).__init__()
-        self.fc = nn.Linear(ft_in, nb_classes)
-
-        for m in self.modules():
-            self.weights_init(m)
-
-    def weights_init(self, m):
-        if isinstance(m, nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight.data)
-            if m.bias is not None:
-                m.bias.data.fill_(0.0)
-
-    def forward(self, seq):
-        ret = self.fc(seq)
-        return ret
 
 
 class Encoder(torch.nn.Module):
@@ -36,7 +17,7 @@ class Encoder(torch.nn.Module):
         assert k >= 2
         self.k = k
         self.conv = [base_model(in_channels, 2 * out_channels)]
-        for _ in range(1, k-1):
+        for _ in range(1, k - 1):
             self.conv.append(base_model(2 * out_channels, 2 * out_channels))
         self.conv.append(base_model(2 * out_channels, out_channels))
         self.conv = nn.ModuleList(self.conv)
@@ -50,7 +31,7 @@ class Encoder(torch.nn.Module):
 
 
 class EncoderRecoverability(torch.nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, activation,kernel_lmbda:float,
+    def __init__(self, in_channels: int, out_channels: int, activation, kernel_lmbda: float,
                  base_model=GCNConv, k: int = 2):
         super(EncoderRecoverability, self).__init__()
         self.base_model = base_model
@@ -58,7 +39,7 @@ class EncoderRecoverability(torch.nn.Module):
         assert k >= 2
         self.k = k
         self.conv = [base_model(in_channels, 2 * out_channels)]
-        for _ in range(1, k-1):
+        for _ in range(1, k - 1):
             self.conv.append(base_model(2 * out_channels, 2 * out_channels))
         self.conv.append(base_model(2 * out_channels, out_channels))
         self.conv = nn.ModuleList(self.conv)
@@ -102,6 +83,47 @@ class EncoderRecoverability(torch.nn.Module):
             lvl_loss.append(curr_loss.item())
             loss += curr_loss
         print(lvl_loss)
+        return loss
+
+
+class LogReg(torch.nn.Module):
+    def __init__(self, ft_in, nb_classes):
+        super(LogReg, self).__init__()
+        self.fc0 = torch.nn.Linear(ft_in, ft_in)
+        self.fc1 = torch.nn.Linear(ft_in, nb_classes)
+
+    def forward(self, seq):
+        ret = F.leaky_relu(self.fc0(seq))
+        ret = self.fc1(ret)
+        return ret
+
+
+class SupervisedModel(torch.nn.Module):
+
+    def __init__(self, in_channels: int, hidden_channels: int, activation, nb_classes: int,
+                 base_model=GCNConv, k: int = 2):
+        super().__init__()
+        self.fe = EncoderRecoverability(in_channels=in_channels,
+                                        out_channels=hidden_channels,
+                                        activation=activation,
+                                        kernel_lmbda=0,
+                                        base_model=base_model,
+                                        k=k)
+
+        self.classifier = LogReg(ft_in=hidden_channels,
+                                 nb_classes=nb_classes)
+
+    def forward(self, x, edge_index):
+        embs = self.fe(x, edge_index)
+        preds = self.classifier(embs[-1])
+        return preds
+
+    def loss(self, x: torch.Tensor, edge_index: torch.Tensor, y: torch.Tensor, mask: Optional[torch.Tensor]):
+        preds = self.forward(x=x, edge_index=edge_index)
+        if mask is not None:
+            preds = preds[mask]
+            y = y[mask]
+        loss = F.cross_entropy(input=preds, target=y)
         return loss
 
 
@@ -186,7 +208,7 @@ class Model(torch.nn.Module):
 
 def drop_feature(x, drop_prob):
     drop_mask = torch.empty(
-        (x.size(1), ),
+        (x.size(1),),
         dtype=torch.float32,
         device=x.device).uniform_(0, 1) < drop_prob
     x = x.clone()

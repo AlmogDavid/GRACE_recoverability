@@ -23,8 +23,8 @@ from torch_geometric.loader import ClusterData, ClusterLoader
 from torch_geometric.utils import dropout_adj
 from torch_geometric.nn import GCNConv
 
-from model import Encoder, Model, drop_feature, EncoderRecoverability
-from eval import label_classification_grace, label_classification_dgi
+from model import Encoder, Model, drop_feature, EncoderRecoverability, SupervisedModel
+from eval import label_classification_grace, label_classification_dgi, label_classification_supervised
 
 
 def train(model: Model, data, max_edges_for_r, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2):
@@ -37,6 +37,8 @@ def train(model: Model, data, max_edges_for_r, optimizer, drop_edge_rate_1, drop
         if isinstance(model, EncoderRecoverability):
             h = model(x, edge_index)
             loss = model.loss(x, h, edge_index, max_edges_for_r)
+        elif isinstance(model, SupervisedModel):
+            loss = model.loss(x=x, edge_index=edge_index, y=curr_data.y.cuda(), mask=curr_data.train_mask.cuda())
         else:
             edge_index_1 = dropout_adj(edge_index, p=drop_edge_rate_1)[0]
             edge_index_2 = dropout_adj(edge_index, p=drop_edge_rate_2)[0]
@@ -56,7 +58,7 @@ def train(model: Model, data, max_edges_for_r, optimizer, drop_edge_rate_1, drop
     return loss_avg
 
 
-def test(model: Model, data: torch_geometric.data.Data, eval_method: str):
+def test(model: Model, data: torch_geometric.data.Data, eval_method: str, exp_type: str):
     with torch.no_grad():
         model.eval()
         y_train_agg = []
@@ -79,12 +81,15 @@ def test(model: Model, data: torch_geometric.data.Data, eval_method: str):
         y_train = torch.cat(y_train_agg).numpy()
         y_test = torch.cat(y_test_agg).numpy()
 
-    if eval_method == "DGI":
-        label_classification_dgi(z_train, z_test, y_train, y_test)
-    elif eval_method == "GRACE":
-        label_classification_grace(z_train, z_test, y_train, y_test)
+    if exp_type == "supervised":
+        label_classification_supervised(z_test, y_test)
     else:
-        raise RuntimeError("Invalid classification method")
+        if eval_method == "DGI":
+            label_classification_dgi(z_train, z_test, y_train, y_test)
+        elif eval_method == "GRACE":
+            label_classification_grace(z_train, z_test, y_train, y_test)
+        else:
+            raise RuntimeError("Invalid classification method")
 
 
 def get_free_gpu():
@@ -129,11 +134,16 @@ def main(root_config: DictConfig):
     assert config["eval_method"] in ("GRACE", "DGI")
 
     method = root_config.method
+    exp_type = root_config.exp_type
     torch.cuda.set_device(get_free_gpu())
 
     if root_config.use_wandb:
         wandb.init(project=root_config.wandb_project)
-        wandb.config.update(cfg2dict(config))
+        config_to_log = cfg2dict(config)
+        config_to_log["dataset"] = dataset_name
+        config_to_log["method"] = root_config.method
+        config_to_log["exp_type"] = root_config.exp_type
+        wandb.config.update(config_to_log)
 
     print(OmegaConf.to_yaml(config))
 
@@ -238,27 +248,39 @@ def main(root_config: DictConfig):
     path = osp.join(osp.expanduser('~'), 'datasets', dataset_name)
     data = get_dataset(path, dataset_name)
 
-    if method == "recoverability":
-        model = EncoderRecoverability(data[0].x.size(-1), num_hidden, activation, base_model=base_model, k=num_layers, kernel_lmbda=float(config["kernel_lambda"])).cuda()
+    if exp_type == "supervised":
+        num_classes = torch.max(torch.stack([torch.max(d.y) for d in data])).item() + 1
+        model = SupervisedModel(in_channels=data[0].x.size(-1),
+                                hidden_channels=num_hidden,
+                                activation=activation,
+                                nb_classes=num_classes,
+                                base_model=base_model,
+                                k=num_layers).cuda()
     else:
-        encoder = Encoder(data[0].x.size(-1), num_hidden, activation,
-                          base_model=base_model, k=num_layers).cuda()
-        model = Model(encoder, num_hidden, num_proj_hidden, method, tau).cuda()
+        if method == "recoverability":
+            model = EncoderRecoverability(data[0].x.size(-1), num_hidden, activation, base_model=base_model, k=num_layers, kernel_lmbda=float(config["kernel_lambda"])).cuda()
+        else:
+            encoder = Encoder(data[0].x.size(-1), num_hidden, activation,
+                              base_model=base_model, k=num_layers).cuda()
+            model = Model(encoder, num_hidden, num_proj_hidden, method, tau).cuda()
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     start = t()
     prev = start
-    for epoch in range(1, num_epochs + 1):
-        loss = train(model, data, config["max_edges_for_r"], optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2)
+    if exp_type == "random":
+        print("Using random experiment, no training for model")
+    else:
+        for epoch in range(1, num_epochs + 1):
+            loss = train(model, data, config["max_edges_for_r"], optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2)
 
-        now = t()
-        print(f'(T) | Epoch={epoch:03d}, loss={loss:.4f}, '
-              f'this epoch {now - prev:.4f}, total {now - start:.4f}')
-        prev = now
+            now = t()
+            print(f'(T) | Epoch={epoch:03d}, loss={loss:.4f}, '
+                  f'this epoch {now - prev:.4f}, total {now - start:.4f}')
+            prev = now
 
-    print("=== Final ===")
-    test(model, data, config['eval_method'])
+        print("=== Final ===")
+    test(model, data, config['eval_method'], exp_type)
 
 
 if __name__ == '__main__':

@@ -2,6 +2,7 @@ dataset: ~
 method: ~
 use_wandb: false
 wandb_project: GRACE_recoverability
+exp_type: unsupervised
 Cora:
   seed: 39788
   learning_rate: 0.00005
