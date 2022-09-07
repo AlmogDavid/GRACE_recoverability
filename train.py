@@ -21,7 +21,7 @@ import torch.nn as nn
 from torch_geometric.datasets import Planetoid, CitationFull, Reddit2, PPI, Reddit, Amazon
 from torch_geometric.loader import ClusterData, ClusterLoader
 from torch_geometric.utils import dropout_adj
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, GATConv
 
 from model import Encoder, Model, drop_feature, EncoderRecoverability, SupervisedModel
 from eval import label_classification_grace, label_classification_dgi, label_classification_supervised
@@ -154,7 +154,8 @@ def main(root_config: DictConfig):
     num_hidden = config['num_hidden']
     num_proj_hidden = config['num_proj_hidden']
     activation = ({'relu': F.relu, 'prelu': nn.PReLU()})[config['activation']]
-    base_model = ({'GCNConv': GCNConv})[config['base_model']]
+    base_model = ({'GCNConv': GCNConv,
+                   'GATConv': GATConv})[config['base_model']]
     num_layers = config['num_layers']
 
     drop_edge_rate_1 = config['drop_edge_rate_1']
