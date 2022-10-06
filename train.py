@@ -5,6 +5,7 @@ from io import StringIO
 from time import perf_counter as t
 from typing import Dict
 import hydra
+import ogb.lsc
 import torch_geometric
 import wandb
 import numpy as np
@@ -18,7 +19,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 import torch_geometric.transforms as T
 import torch.nn.functional as F
 import torch.nn as nn
-from torch_geometric.datasets import Planetoid, CitationFull, Reddit2, PPI, Reddit, Amazon
+from torch_geometric.datasets import Planetoid, CitationFull, Reddit2, PPI, Reddit, Amazon, Coauthor, WikiCS
 from torch_geometric.loader import ClusterData, ClusterLoader
 from torch_geometric.utils import dropout_adj
 from torch_geometric.nn import GCNConv, GATConv
@@ -224,8 +225,10 @@ def main(root_config: DictConfig):
 
             # Merge graphs
             data = data_map["train_mask"] + data_map["val_mask"] + data_map["test_mask"]
-        elif name == "amazon_photos":
-            data = Amazon(root=path, name="photo", transform=T.NormalizeFeatures())[0]
+        elif name in ("amazon_photos", "amazon_computers"):
+            ds_sub_name = {"amazon_photos": "photo",
+                           "amazon_computers": "computers"}[name]
+            data = Amazon(root=path, name=ds_sub_name, transform=T.NormalizeFeatures())[0]
             node_idx = np.arange(data.x.size(0))
             labels = data.y
             idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
@@ -236,6 +239,25 @@ def main(root_config: DictConfig):
             test_mask[idx_test] = True
             data.train_mask = train_mask
             data.test_mask = test_mask
+        elif name in ("coauthor_physics", "coauthor_cs"):
+            ds_sub_name = {"coauthor_physics": "physics",
+                           "coauthor_cs": "CS"}[name]
+            data = Coauthor(root=path, name=ds_sub_name)[0]
+            node_idx = np.arange(data.x.size(0))
+            labels = data.y
+            idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
+                                                         test_size=0.2)
+            train_mask = torch.zeros_like(data.y, dtype=torch.bool)
+            train_mask[idx_train] = True
+            test_mask = torch.zeros_like(train_mask)
+            test_mask[idx_test] = True
+            data.train_mask = train_mask
+            data.test_mask = test_mask
+        elif name == "wiki_cs":
+            data = WikiCS(root=path)[0]
+        elif name == "mag_240m":
+            data = ogb.lsc.MAG240MDataset(root=path)
+            loli = 3
         else:
             raise ValueError(f"Invalid DS: {dataset_name}")
 
