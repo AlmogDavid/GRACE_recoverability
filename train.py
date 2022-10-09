@@ -195,8 +195,9 @@ def main(root_config: DictConfig):
             data = T.NormalizeFeatures()(data)
         elif name in ("ogbn_arxiv", "ogbn_products"):
             dataset = PygNodePropPredDataset(name=name.replace("_", "-"),
-                                             root=path.replace("_","-"))
-            data = dataset[0]
+                                             root=path.replace("_","-"),
+                                             transform=T.NormalizeFeatures()) # TODO: run without undirected as well
+            data = dataset[0] # TODO: write the dropout idea
             split_idx = dataset.get_idx_split()
             data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
             data.train_mask[split_idx["train"]] = True
