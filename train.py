@@ -188,11 +188,9 @@ def main(root_config: DictConfig):
         elif name == "Reddit2":
             data = Reddit2(root=path)[0]  # Remove the first 2 features because there are in different scale
             data.x = data.x[:, 2:]
-            data = T.NormalizeFeatures()(data)
         elif name == "Reddit":
             data = Reddit(root=path)[0]  # Remove the first 2 features because there are in different scale
-            data.x = data.x[:, 2:]
-            data = T.NormalizeFeatures()(data)
+            data.x = data.x[:, 1:]
         elif name in ("ogbn_arxiv", "ogbn_products"):
             dataset = PygNodePropPredDataset(name=name.replace("_", "-"),
                                              root=path.replace("_","-"),
@@ -206,7 +204,7 @@ def main(root_config: DictConfig):
             data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
             data.test_mask[split_idx["test"]] = True
             data.y = data.y.flatten()
-            data.edge_index = torch_geometric.utils.to_undirected(data.edge_index, None, num_nodes=data.x.size(0))
+            #data.edge_index = torch_geometric.utils.to_undirected(data.edge_index, None, num_nodes=data.x.size(0))
         elif name == "PPI":
             train_ds = PPI(root=path, split="train")
             val_ds = PPI(root=path, split="val")

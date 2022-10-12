@@ -1,15 +1,15 @@
-wandb agent almogdavid/GRACE_recoverability_hps/kw9w04x4 &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
 sleep 90s
-wandb agent almogdavid/GRACE_recoverability_hps/kw9w04x4 &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
 sleep 90s
-wandb agent almogdavid/GRACE_recoverability_hps/1q3xpk66 &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
 sleep 90s
-wandb agent almogdavid/GRACE_recoverability_hps/1q3xpk66 &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
 sleep 90s
-wandb agent almogdavid/GRACE_recoverability_hps/x7v46gvz &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
 sleep 90s
-wandb agent almogdavid/GRACE_recoverability_hps/x7v46gvz &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
 sleep 90s
-wandb agent almogdavid/GRACE_recoverability_hps/v5j5o0td &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
 sleep 90s
-wandb agent almogdavid/GRACE_recoverability_hps/v5j5o0td &
+wandb agent almogdavid/GRACE_recoverability_hps/exldn0uz &
