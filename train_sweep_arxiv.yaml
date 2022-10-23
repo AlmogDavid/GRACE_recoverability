@@ -8,22 +8,24 @@ metric:
 parameters:
   use_wandb:
     values: [ true ]
+  multi_gpu:
+    values: [ true ]
   dataset:
     values: ["ogbn_arxiv"]
   method:
     values: ["recoverability"]
   ogbn_arxiv.learning_rate:
-    values: [1e-4, 5e-5, 1e-5, 5e-6, 1e-6]
+    values: [5e-5, 1e-5, 5e-6, 1e-6]
   ogbn_arxiv.num_hidden:
-    values: [128, 256, 512]
+    values: [1024, 2048, 4096]
   ogbn_arxiv.num_layers:
-    values: [2, 4]
+    values: [2, 4, 6, 8]
   ogbn_arxiv.kernel_lambda:
-    values: [100, 10, 1, 0, 1e-2, 1e-3, 1e-4, 1e-5]
+    values: [1e-2, 1e-3, 1e-4, 1e-5]
   ogbn_arxiv.num_epochs:
-    values: [100]
+    values: [200]
   ogbn_arxiv.num_data_splits:
-    values: [2, 4, 8 16, 32, 64, 128, 256, 512, 1024]
+    values: [8]
 
 command:
   - ${env}

@@ -31,11 +31,11 @@ class Encoder(torch.nn.Module):
 
 
 class EncoderRecoverability(torch.nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, activation, kernel_lmbda: float,
-                 base_model=GCNConv, k: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, activation, kernel_lmbda: float, max_edges_for_r: int,
+                 base_model=GCNConv, k: int = 2,):
         super(EncoderRecoverability, self).__init__()
         self.base_model = base_model
-
+        self.max_edges_for_r = max_edges_for_r
         assert k >= 2
         self.k = k
         self.conv = [base_model(in_channels, 2 * out_channels)]
@@ -47,14 +47,24 @@ class EncoderRecoverability(torch.nn.Module):
         self.activation = activation
         self.kernel = GaussianKernel(kernel_lambda=kernel_lmbda)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor):
+    def forward(self, data):
+        if self.training:
+            return self.loss(data, self.max_edges_for_r)
+        else:
+            return self._internal_forward(data)
+
+    def _internal_forward(self, data):
+        x, edge_index = data.x, data.edge_index
+        dtype = x.dtype
         h = []
         for i in range(self.k):
-            x = self.activation(self.conv[i](x, edge_index))
+            x = self.activation(self.conv[i](x, edge_index)).type(dtype)
             h.append(x)
         return h
 
-    def loss(self, x: torch.Tensor, h: List[torch.Tensor], edge_index: torch.Tensor, max_edges_for_loss: int):
+    def loss(self, data, max_edges_for_loss: int):
+        x, edge_index = data.x, data.edge_index
+        h = self._internal_forward(data)
         h.insert(0, x)
         loss = 0
         lvl_loss = []
@@ -113,14 +123,21 @@ class SupervisedModel(torch.nn.Module):
         self.classifier = LogReg(ft_in=hidden_channels,
                                  nb_classes=nb_classes)
 
-    def forward(self, x, edge_index):
+    def forward(self, data):
+        if self.training:
+            return self.loss(data, data.train_mask)
+
+    def _internal_forward(self, data):
+        x, edge_index = data.x, data.edge_index
         embs = self.fe(x, edge_index)
         preds = self.classifier(embs[-1])
         return preds
 
-    def loss(self, x: torch.Tensor, edge_index: torch.Tensor, y: torch.Tensor, mask: Optional[torch.Tensor]):
-        preds = self.forward(x=x, edge_index=edge_index)
+    def loss(self, data, mask: Optional[str]):
+        y = data.y
+        preds = self._internal_forward(data)
         if mask is not None:
+            mask = getattr(data, mask)
             preds = preds[mask]
             y = y[mask]
         loss = F.cross_entropy(input=preds, target=y)
@@ -140,8 +157,8 @@ class Model(torch.nn.Module):
         self.kernel = GaussianKernel()
         self.loss_type = loss_type
 
-    def forward(self, x: torch.Tensor,
-                edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(self, data) -> torch.Tensor:
+        x, edge_index = data.x, data.edge_index
         return self.encoder(x, edge_index)
 
     def projection(self, z: torch.Tensor) -> torch.Tensor:

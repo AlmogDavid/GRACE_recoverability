@@ -1,6 +1,7 @@
 dataset: ~
 method: ~
 use_wandb: false
+multi_gpu: false
 wandb_project: GRACE_recoverability
 exp_type: unsupervised
 Cora:
@@ -22,6 +23,7 @@ Cora:
   kernel_lambda: 1
   num_data_splits: 1
   eval_method: GRACE
+  use_half_precision: false
 amazon_photos:
   seed: 39788
   learning_rate: 0.0001
@@ -41,6 +43,7 @@ amazon_photos:
   kernel_lambda: 0.01
   num_data_splits: 1
   eval_method: GRACE
+  use_half_precision: false
 PPI:
   seed: 39788
   learning_rate: 0.000001
@@ -60,6 +63,7 @@ PPI:
   kernel_lambda: 0.00001
   num_data_splits: 1
   eval_method: DGI
+  use_half_precision: false
 CiteSeer:
   seed: 38108
   learning_rate: 0.00005
@@ -79,6 +83,7 @@ CiteSeer:
   kernel_lambda: 1
   num_data_splits: 1
   eval_method: GRACE
+  use_half_precision: false
 PubMed:
   seed: 23344
   learning_rate: 0.00005
@@ -98,6 +103,7 @@ PubMed:
   kernel_lambda: 1
   num_data_splits: 1
   eval_method: GRACE
+  use_half_precision: false
 DBLP:
   seed: 83521
   learning_rate: 0.00005
@@ -117,6 +123,7 @@ DBLP:
   kernel_lambda: 0
   num_data_splits: 1
   eval_method: GRACE
+  use_half_precision: false
 Reddit2:
   seed: 23344
   learning_rate: 0.000001
@@ -136,6 +143,7 @@ Reddit2:
   kernel_lambda: 100
   num_data_splits: 128
   eval_method: DGI
+  use_half_precision: false
 Reddit:
   seed: 23344
   learning_rate: 0.000001
@@ -155,6 +163,7 @@ Reddit:
   kernel_lambda: 100
   num_data_splits: 128
   eval_method: DGI
+  use_half_precision: false
 ogbn_arxiv:
   seed: 23344
   learning_rate: 0.000005
@@ -174,6 +183,7 @@ ogbn_arxiv:
   kernel_lambda: 0
   num_data_splits: 64
   eval_method: DGI
+  use_half_precision: false
 ogbn_products:
   seed: 23344
   learning_rate: 0.0001
@@ -193,6 +203,7 @@ ogbn_products:
   kernel_lambda: 0
   num_data_splits: 1024
   eval_method: DGI
+  use_half_precision: false
 amazon_computers:
     seed: 39788
     learning_rate: 0.0001
@@ -212,6 +223,7 @@ amazon_computers:
     kernel_lambda: 0.01
     num_data_splits: 1
     eval_method: GRACE
+    use_half_precision: false
 wiki_cs:
     seed: 39788
     learning_rate: 0.0001
@@ -231,6 +243,7 @@ wiki_cs:
     kernel_lambda: 0.01
     num_data_splits: 1
     eval_method: GRACE
+    use_half_precision: false
 coauthor_physics:
     seed: 39788
     learning_rate: 0.0001
@@ -250,6 +263,7 @@ coauthor_physics:
     kernel_lambda: 0.01
     num_data_splits: 1
     eval_method: GRACE
+    use_half_precision: false
 coauthor_cs:
     seed: 39788
     learning_rate: 0.0001
@@ -269,11 +283,12 @@ coauthor_cs:
     kernel_lambda: 0.01
     num_data_splits: 1
     eval_method: GRACE
+    use_half_precision: false
 mag_240m:
   seed: 23344
-  learning_rate: 0.0001
-  num_hidden: 512
-  num_proj_hidden: 256
+  learning_rate: 0.00001
+  num_hidden: 1024
+  num_proj_hidden: 512
   activation: 'relu'
   base_model: 'GCNConv'
   num_layers: 2
@@ -284,7 +299,8 @@ mag_240m:
   tau: 0.7
   num_epochs: 2
   weight_decay: 0.00001
-  max_edges_for_r: 2048
+  max_edges_for_r: 4096
   kernel_lambda: 0
-  num_data_splits: 1024
+  num_data_splits: 8192
   eval_method: DGI
+  use_half_precision: true

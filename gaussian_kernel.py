@@ -1,16 +1,19 @@
 import torch
+from torch.cuda.amp import custom_fwd, custom_bwd
 
 
 class EigenDecompositionV2(torch.autograd.Function):
 
     @staticmethod
+    @custom_fwd(cast_inputs=torch.float32)
     def forward(ctx, M):
-        ut, s, u = torch.svd(M)  # s in a descending sequence.
+        _, s, u = torch.linalg.svd(M)  # s in a descending sequence.
         s = torch.clamp(s, min=1e-5)
         ctx.save_for_backward(M, u, s)
         return s, u
 
     @staticmethod
+    @custom_bwd
     def backward(ctx, dL_ds, dL_du):
         M, u, s = ctx.saved_tensors
         K_t = EigenDecompositionV2.geometric_approximation(s).t()
