@@ -166,9 +166,9 @@ Reddit:
   use_half_precision: false
 ogbn_arxiv:
   seed: 23344
-  learning_rate: 0.000005
-  num_hidden: 256
-  num_proj_hidden: 256
+  learning_rate: 0.000001
+  num_hidden: 1024
+  num_proj_hidden: 512
   activation: 'relu'
   base_model: 'GCNConv'
   num_layers: 2
@@ -180,8 +180,8 @@ ogbn_arxiv:
   num_epochs: 100
   weight_decay: 0.00001
   max_edges_for_r: 2048
-  kernel_lambda: 0
-  num_data_splits: 64
+  kernel_lambda: 0.0001
+  num_data_splits: 1
   eval_method: DGI
   use_half_precision: false
 ogbn_products:

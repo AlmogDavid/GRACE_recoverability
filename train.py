@@ -33,7 +33,143 @@ from model import Encoder, Model, drop_feature, EncoderRecoverability, Supervise
 from eval import label_classification_grace, label_classification_dgi, label_classification_supervised
 
 
-def train_procedure(config, root_config, model, data, ans_q: mp.SimpleQueue):
+def get_dataset(name, config):
+    print(f"Loading dataset: {name}")
+    path = osp.join(osp.expanduser('~'), 'datasets', name)
+    name = 'dblp' if name == 'DBLP' else name
+
+    if name == "dblp":
+        data = CitationFull(root=path, name=name, transform=T.NormalizeFeatures())[0]
+        # There is no split, so we perform random split
+        node_idx = np.arange(data.x.size(0))
+        labels = data.y
+        idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
+                                                     test_size=0.2)
+        train_mask = torch.zeros_like(data.y, dtype=torch.bool)
+        train_mask[idx_train] = True
+        test_mask = torch.zeros_like(train_mask)
+        test_mask[idx_test] = True
+        data.train_mask = train_mask
+        data.test_mask = test_mask
+    elif name in ("Cora", "CiteSeer", "PubMed"):
+        data = Planetoid(root=path, name=name, transform=T.NormalizeFeatures())[0]
+    elif name == "Reddit2":
+        data = Reddit2(root=path)[0]  # Remove the first 2 features because there are in different scale
+        data.x = data.x[:, 2:]
+    elif name == "Reddit":
+        data = Reddit(root=path)[0]  # Remove the first 2 features because there are in different scale
+        data.x = data.x[:, 1:]
+    elif name in ("ogbn_arxiv", "ogbn_products"):
+        dataset = PygNodePropPredDataset(name=name.replace("_", "-"),
+                                         root=path.replace("_", "-"),
+                                         transform=T.NormalizeFeatures())
+        data = dataset[0]
+        split_idx = dataset.get_idx_split()
+        data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+        data.train_mask[split_idx["train"]] = True
+        data.val_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+        data.val_mask[split_idx["valid"]] = True
+        data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+        data.test_mask[split_idx["test"]] = True
+        data.y = data.y.flatten()
+        data.edge_index = torch_geometric.utils.to_undirected(data.edge_index, None, num_nodes=data.x.size(0))
+    elif name == "PPI":
+        train_ds = PPI(root=path, split="train")
+        val_ds = PPI(root=path, split="val")
+        test_ds = PPI(root=path, split="test")
+
+        # Build masks
+        data_map = {"train_mask": [],
+                    "val_mask": [],
+                    "test_mask": []}
+        for curr_ds, relevant_mask in ((train_ds, "train_mask"), (val_ds, "val_mask"), (test_ds, "test_mask")):
+            for data in curr_ds:
+                data.val_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+                data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+                data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
+                setattr(data, relevant_mask, torch.ones((data.x.size(0),), dtype=torch.bool))
+                data_map[relevant_mask].append(data)
+
+        # Merge graphs
+        data = data_map["train_mask"] + data_map["val_mask"] + data_map["test_mask"]
+    elif name in ("amazon_photos", "amazon_computers"):
+        ds_sub_name = {"amazon_photos": "photo",
+                       "amazon_computers": "computers"}[name]
+        data = Amazon(root=path, name=ds_sub_name, transform=T.NormalizeFeatures())[0]
+        node_idx = np.arange(data.x.size(0))
+        labels = data.y
+        idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
+                                                     test_size=0.2)
+        train_mask = torch.zeros_like(data.y, dtype=torch.bool)
+        train_mask[idx_train] = True
+        test_mask = torch.zeros_like(train_mask)
+        test_mask[idx_test] = True
+        data.train_mask = train_mask
+        data.test_mask = test_mask
+    elif name in ("coauthor_physics", "coauthor_cs"):
+        ds_sub_name = {"coauthor_physics": "physics",
+                       "coauthor_cs": "CS"}[name]
+        data = Coauthor(root=path, name=ds_sub_name)[0]
+        node_idx = np.arange(data.x.size(0))
+        labels = data.y
+        idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
+                                                     test_size=0.2)
+        train_mask = torch.zeros_like(data.y, dtype=torch.bool)
+        train_mask[idx_train] = True
+        test_mask = torch.zeros_like(train_mask)
+        test_mask[idx_test] = True
+        data.train_mask = train_mask
+        data.test_mask = test_mask
+    elif name == "wiki_cs":
+        data = WikiCS(root=path)[0]
+    elif name == "mag_240m":
+        dataset = ogb.lsc.MAG240MDataset(root=path)
+        x = torch.arange(dataset.num_papers)  # We will load the actual data after the clustering is done
+        y = torch.from_numpy(dataset.all_paper_label)
+        edge_index = torch.from_numpy(dataset.edge_index('paper', 'paper'))
+        train_mask = torch.zeros((x.size(0),), dtype=torch.bool)
+        train_mask[dataset.get_idx_split("train")] = True
+        val_mask = torch.zeros((x.size(0),), dtype=torch.bool)
+        val_mask[dataset.get_idx_split("valid")] = True
+        test_mask = torch.zeros((x.size(0),), dtype=torch.bool)
+        test_mask[dataset.get_idx_split(
+            "test-dev")] = True  # TODO: do we need test-dev or test-challenge? https://ogb.stanford.edu/docs/lsc/mag240m/
+        # Remove all nodes without labels from the train/val/test splits
+        nodes_with_labels = torch.logical_not(torch.logical_or(torch.isnan(y), y < 0))
+        train_mask = torch.logical_and(train_mask, nodes_with_labels)
+        val_mask = torch.logical_and(val_mask, nodes_with_labels)
+        test_mask = torch.logical_and(test_mask, nodes_with_labels)
+
+        data = torch_geometric.data.Data(x=x,
+                                         edge_index=edge_index,
+                                         y=y,
+                                         train_mask=train_mask,
+                                         val_mask=val_mask,
+                                         test_mask=test_mask)
+        data.edge_index = torch_geometric.utils.to_undirected(data.edge_index, None, num_nodes=data.x.size(0))
+    else:
+        raise ValueError(f"Invalid DS: {name}")
+
+    if config.num_data_splits > 1:
+        print("Clustering DS")
+        data = cluster_data(data, config.num_data_splits, path)
+        print("DONE - Clustering DS")
+
+    if name == "mag_240m":
+        print("Loading data to clusters for mag_240m")
+        orig_x = torch.from_numpy(dataset.all_paper_feat)
+        for d in tqdm.tqdm(data):
+            d.x = orig_x[d.x]
+
+    elif isinstance(data, torch_geometric.data.Data):
+        data = [data]
+
+    print(f"DONE - Loading dataset: {name}")
+    return data
+
+
+def train_procedure(config, root_config, model, ans_q, emb_out_dir: str):
+    data = get_dataset(root_config.dataset, config)
     exp_type = root_config.exp_type
     learning_rate = config['learning_rate']
 
@@ -51,7 +187,6 @@ def train_procedure(config, root_config, model, data, ans_q: mp.SimpleQueue):
 
     optimizer = torch.optim.Adam(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-
 
     start = perf_counter()
     prev = start
@@ -73,20 +208,26 @@ def train_procedure(config, root_config, model, data, ans_q: mp.SimpleQueue):
             data_for_train = data
 
         scaler = torch.cuda.amp.GradScaler() if config.use_half_precision else None
-
+        effective_model = model.module if isinstance(model, DataParallel) else model
         for epoch in range(1, num_epochs + 1):
-            loss = train(model, data_for_train, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2, scaler)
+            loss = train(model, effective_model, data_for_train, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2, scaler)
 
             now = perf_counter()
             print(f'(T) | Epoch={epoch:03d}, loss={loss:.4f}, '
                   f'this epoch {now - prev:.4f}, total {now - start:.4f}')
             prev = now
 
-    model_state_dict = model.cpu().state_dict()
-    ans_q.put(model_state_dict)
-    return model_state_dict
+    running_dtype = torch.half if config.use_half_precision else torch.float32
+    #
+    # if config.use_half_precision:
+    #     model = model.half()
+    with torch.cuda.amp.autocast() if config.use_half_precision is None else nullcontext():
+        train_data_dir, nb_classes = save_test_emb(model, effective_model, data_for_train, emb_out_dir, running_dtype)
 
-def train(model: Model, data, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2, scaler):
+    del data  # Release memory
+    ans_q.put(nb_classes)
+
+def train(model: Model, effective_model, data, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2, scaler):
     model.train()
     total_nodes = 0
     total_loss = 0
@@ -94,7 +235,8 @@ def train(model: Model, data, optimizer, drop_edge_rate_1, drop_edge_rate_2, dro
 
     for curr_data in data:
         optimizer.zero_grad()
-        effective_model = model.module if isinstance(model, DataParallel) else model
+        if not multi_gpu_train:
+            curr_data = curr_data.cuda()
         with nullcontext() if scaler is None else torch.cuda.amp.autocast():
             if isinstance(effective_model, EncoderRecoverability):
                 loss = model(curr_data)
@@ -130,7 +272,7 @@ def train(model: Model, data, optimizer, drop_edge_rate_1, drop_edge_rate_2, dro
     return loss_avg
 
 
-def save_test_emb(model: Model, data: torch_geometric.data.Data, train_data_dir: str, running_dtype):
+def save_test_emb(model: Model, effective_model: Model, data: torch_geometric.data.Data, train_data_dir: str, running_dtype):
     with torch.no_grad():
         model.eval()
 
@@ -142,11 +284,18 @@ def save_test_emb(model: Model, data: torch_geometric.data.Data, train_data_dir:
 
 
         for i, curr_data in tqdm.tqdm(enumerate(data), "Generating embeddings for testing"):
-            curr_data.x = curr_data.x.type(running_dtype)
-            curr_data = curr_data.cuda()
-            x, edge_index, y, test_mask = curr_data.x, curr_data.edge_index, curr_data.y, curr_data.test_mask
             z = model(curr_data)
-            if isinstance(model, EncoderRecoverability):
+            if isinstance(curr_data, list):
+                for d in curr_data:
+                    d.x = d.x.type(running_dtype)
+                test_mask = torch.cat([d.test_mask for d in curr_data])
+                y = torch.cat([d.y for d in curr_data])
+            else:
+                test_mask = curr_data.test_mask
+                y = curr_data.y
+                curr_data.x = curr_data.x.type(running_dtype)
+                curr_data = curr_data.cuda()
+            if isinstance(effective_model, EncoderRecoverability):
                 z = z[-1]
 
             has_test = torch.any(test_mask)
@@ -246,137 +395,6 @@ def main(root_config: DictConfig):
     torch.manual_seed(config['seed'])
     random.seed(12345)
 
-    def get_dataset(path, name):
-        name = 'dblp' if name == 'DBLP' else name
-
-        if name == "dblp":
-            data = CitationFull(root=path, name=name, transform=T.NormalizeFeatures())[0]
-            # There is no split, so we perform random split
-            node_idx = np.arange(data.x.size(0))
-            labels = data.y
-            idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
-                                                                test_size=0.2)
-            train_mask = torch.zeros_like(data.y, dtype=torch.bool)
-            train_mask[idx_train] = True
-            test_mask = torch.zeros_like(train_mask)
-            test_mask[idx_test] = True
-            data.train_mask = train_mask
-            data.test_mask = test_mask
-        elif name in ("Cora", "CiteSeer", "PubMed"):
-            data = Planetoid(root=path, name=name, transform=T.NormalizeFeatures())[0]
-        elif name == "Reddit2":
-            data = Reddit2(root=path)[0]  # Remove the first 2 features because there are in different scale
-            data.x = data.x[:, 2:]
-        elif name == "Reddit":
-            data = Reddit(root=path)[0]  # Remove the first 2 features because there are in different scale
-            data.x = data.x[:, 1:]
-        elif name in ("ogbn_arxiv", "ogbn_products"):
-            dataset = PygNodePropPredDataset(name=name.replace("_", "-"),
-                                             root=path.replace("_","-"),
-                                             transform=T.NormalizeFeatures())
-            data = dataset[0]
-            split_idx = dataset.get_idx_split()
-            data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
-            data.train_mask[split_idx["train"]] = True
-            data.val_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
-            data.val_mask[split_idx["valid"]] = True
-            data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
-            data.test_mask[split_idx["test"]] = True
-            data.y = data.y.flatten()
-            data.edge_index = torch_geometric.utils.to_undirected(data.edge_index, None, num_nodes=data.x.size(0))
-        elif name == "PPI":
-            train_ds = PPI(root=path, split="train")
-            val_ds = PPI(root=path, split="val")
-            test_ds = PPI(root=path, split="test")
-
-            # Build masks
-            data_map = {"train_mask": [],
-                        "val_mask": [],
-                        "test_mask": []}
-            for curr_ds, relevant_mask in ((train_ds, "train_mask"), (val_ds, "val_mask"), (test_ds, "test_mask")):
-                for data in curr_ds:
-                    data.val_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
-                    data.train_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
-                    data.test_mask = torch.zeros((data.x.size(0),), dtype=torch.bool)
-                    setattr(data, relevant_mask, torch.ones((data.x.size(0),), dtype=torch.bool))
-                    data_map[relevant_mask].append(data)
-
-            # Merge graphs
-            data = data_map["train_mask"] + data_map["val_mask"] + data_map["test_mask"]
-        elif name in ("amazon_photos", "amazon_computers"):
-            ds_sub_name = {"amazon_photos": "photo",
-                           "amazon_computers": "computers"}[name]
-            data = Amazon(root=path, name=ds_sub_name, transform=T.NormalizeFeatures())[0]
-            node_idx = np.arange(data.x.size(0))
-            labels = data.y
-            idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
-                                                         test_size=0.2)
-            train_mask = torch.zeros_like(data.y, dtype=torch.bool)
-            train_mask[idx_train] = True
-            test_mask = torch.zeros_like(train_mask)
-            test_mask[idx_test] = True
-            data.train_mask = train_mask
-            data.test_mask = test_mask
-        elif name in ("coauthor_physics", "coauthor_cs"):
-            ds_sub_name = {"coauthor_physics": "physics",
-                           "coauthor_cs": "CS"}[name]
-            data = Coauthor(root=path, name=ds_sub_name)[0]
-            node_idx = np.arange(data.x.size(0))
-            labels = data.y
-            idx_train, idx_test, _, _ = train_test_split(node_idx, labels,
-                                                         test_size=0.2)
-            train_mask = torch.zeros_like(data.y, dtype=torch.bool)
-            train_mask[idx_train] = True
-            test_mask = torch.zeros_like(train_mask)
-            test_mask[idx_test] = True
-            data.train_mask = train_mask
-            data.test_mask = test_mask
-        elif name == "wiki_cs":
-            data = WikiCS(root=path)[0]
-        elif name == "mag_240m":
-            dataset = ogb.lsc.MAG240MDataset(root=path)
-            x = torch.arange(dataset.num_papers) # We will load the actual data after the clustering is done
-            y = torch.from_numpy(dataset.all_paper_label)
-            edge_index = torch.from_numpy(dataset.edge_index('paper', 'paper'))
-            train_mask = torch.zeros((x.size(0),), dtype=torch.bool)
-            train_mask[dataset.get_idx_split("train")] = True
-            val_mask = torch.zeros((x.size(0),), dtype=torch.bool)
-            val_mask[dataset.get_idx_split("valid")] = True
-            test_mask = torch.zeros((x.size(0),), dtype=torch.bool)
-            test_mask[dataset.get_idx_split("test-dev")] = True # TODO: do we need test-dev or test-challenge? https://ogb.stanford.edu/docs/lsc/mag240m/
-            # Remove all nodes without labels from the train/val/test splits
-            nodes_with_labels = torch.logical_not(torch.logical_or(torch.isnan(y), y < 0))
-            train_mask = torch.logical_and(train_mask, nodes_with_labels)
-            val_mask = torch.logical_and(val_mask, nodes_with_labels)
-            test_mask = torch.logical_and(test_mask, nodes_with_labels)
-
-            data = torch_geometric.data.Data(x=x,
-                                             edge_index=edge_index,
-                                             y=y,
-                                             train_mask=train_mask,
-                                             val_mask=val_mask,
-                                             test_mask=test_mask)
-            data.edge_index = torch_geometric.utils.to_undirected(data.edge_index, None, num_nodes=data.x.size(0))
-        else:
-            raise ValueError(f"Invalid DS: {dataset_name}")
-
-        if config.num_data_splits > 1:
-            data = cluster_data(data, config.num_data_splits, path)
-
-        if name == "mag_240m":
-            print("Loading data to clusters for mag_240m")
-            orig_x = torch.from_numpy(dataset.all_paper_feat)
-            for d in tqdm.tqdm(data):
-                d.x = orig_x[d.x]
-
-        elif isinstance(data, torch_geometric.data.Data):
-            data = [data]
-
-        return data
-
-    path = osp.join(osp.expanduser('~'), 'datasets', dataset_name)
-    data = get_dataset(path, dataset_name)
-
     num_hidden = config['num_hidden']
     num_proj_hidden = config['num_proj_hidden']
     activation = ({'relu': F.relu, 'prelu': nn.PReLU()})[config['activation']]
@@ -384,6 +402,9 @@ def main(root_config: DictConfig):
                    'GATConv': GATConv})[config['base_model']]
     num_layers = config['num_layers']
     tau = config['tau']
+
+    # We load data twice, this is slow but the fix does not worth the time
+    data = get_dataset(dataset_name, config)
 
     if exp_type == "supervised":
         num_classes = torch.max(torch.stack([torch.max(d.y) for d in data])).item() + 1
@@ -401,31 +422,21 @@ def main(root_config: DictConfig):
                               base_model=base_model, k=num_layers).cuda()
             model = Model(encoder, num_hidden, num_proj_hidden, method, tau)
 
+    del data # Release memory
+
     print("Starting training process")
     ans_q = mp.SimpleQueue()
-    train_p = mp.Process(target=train_procedure, args=(config, root_config, model, data, ans_q), )
-    train_p.start()
-    print("Waiting for training to end")
-    train_p.join()
-    model_state_dict = ans_q.get()
 
-    #model_state_dict = train_procedure(config=config, root_config=root_config, model=model, data=data)
-    print("Loading state dict for evaluation")
-    if root_config.multi_gpu:
-        model_state_dict = {k.split("module.")[1]: v for k,v in model_state_dict.items()}
-    model.load_state_dict(model_state_dict)
+    with tempfile.TemporaryDirectory() as train_data_dir:
+        train_p = mp.Process(target=train_procedure, args=(config, root_config, model, ans_q, train_data_dir))
+        train_p.start()
+        print("Waiting for training to end")
+        train_p.join()
+        nb_classes = ans_q.get()
 
-    print("=== Final ===")
+        print("=== Final ===")
 
-    eval_method = config['eval_method']
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        running_dtype = torch.half if config.use_half_precision else torch.float32
-        if config.use_half_precision:
-            model = model.half()
-        with torch.cuda.amp.autocast() if config.use_half_precision is None else nullcontext():
-            train_data_dir, nb_classes = save_test_emb(model.cuda(), data, tmp_dir, running_dtype)
-
-        del data # Release memory
+        eval_method = config['eval_method']
 
         if exp_type == "supervised":
             print("Start testing using SUPERVISED method")
