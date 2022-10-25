@@ -3,6 +3,7 @@ import os.path as osp
 import random
 import subprocess
 import tempfile
+from datetime import datetime
 from io import StringIO
 import multiprocessing as mp
 from time import perf_counter
@@ -30,7 +31,6 @@ from torch_geometric.utils import dropout_adj
 from torch_geometric.nn import GCNConv, GATConv, DataParallel
 
 from model import Encoder, Model, drop_feature, EncoderRecoverability, SupervisedModel
-from eval import label_classification_grace, label_classification_dgi, label_classification_supervised
 
 
 def get_dataset(name, config):
@@ -168,8 +168,7 @@ def get_dataset(name, config):
     return data
 
 
-def train_procedure(config, root_config, model, ans_q, emb_out_dir: str):
-    data = get_dataset(root_config.dataset, config)
+def train_procedure(config, root_config, model, emb_out_dir: str, data):
     exp_type = root_config.exp_type
     learning_rate = config['learning_rate']
 
@@ -225,7 +224,7 @@ def train_procedure(config, root_config, model, ans_q, emb_out_dir: str):
         train_data_dir, nb_classes = save_test_emb(model, effective_model, data_for_train, emb_out_dir, running_dtype)
 
     del data  # Release memory
-    ans_q.put(nb_classes)
+    return nb_classes
 
 def train(model: Model, effective_model, data, optimizer, drop_edge_rate_1, drop_edge_rate_2, drop_feature_rate_1, drop_feature_rate_2, scaler):
     model.train()
@@ -294,7 +293,6 @@ def save_test_emb(model: Model, effective_model: Model, data: torch_geometric.da
                 test_mask = curr_data.test_mask
                 y = curr_data.y
                 curr_data.x = curr_data.x.type(running_dtype)
-                curr_data = curr_data.cuda()
             if isinstance(effective_model, EncoderRecoverability):
                 z = z[-1]
 
@@ -422,36 +420,16 @@ def main(root_config: DictConfig):
                               base_model=base_model, k=num_layers).cuda()
             model = Model(encoder, num_hidden, num_proj_hidden, method, tau)
 
-    del data # Release memory
-
     print("Starting training process")
-    ans_q = mp.SimpleQueue()
-
-    with tempfile.TemporaryDirectory() as train_data_dir:
-        train_p = mp.Process(target=train_procedure, args=(config, root_config, model, ans_q, train_data_dir))
-        train_p.start()
-        print("Waiting for training to end")
-        train_p.join()
-        nb_classes = ans_q.get()
-
-        print("=== Final ===")
-
-        eval_method = config['eval_method']
-
-        if exp_type == "supervised":
-            print("Start testing using SUPERVISED method")
-            label_classification_supervised(train_data_dir)
-        else:
-            if eval_method == "DGI":
-                print("Start testing using DGI method")
-                label_classification_dgi(train_data_dir, nb_classes)
-            elif eval_method == "GRACE":
-                print("Start testing using GRACE method")
-                label_classification_grace(train_data_dir)
-            else:
-                raise RuntimeError("Invalid classification method")
+    dt_string = datetime.now().strftime("%d_%m_%Y_%H_%M_%S")
+    train_data_dir = os.path.join(f"outputs/{dataset_name}/{dt_string}")
+    os.makedirs(train_data_dir, exist_ok=True)
+    nb_classes = train_procedure(config, root_config, model, train_data_dir, data)
+    with open(os.path.join(train_data_dir, "classes.txt"), "w") as out_file:
+        out_file.write(str(nb_classes))
+    print("=== Final ===")
+    print(f"Wrote data to: {train_data_dir}")
 
 
 if __name__ == '__main__':
-    mp.set_start_method('spawn')
     main()

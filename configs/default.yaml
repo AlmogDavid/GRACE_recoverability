@@ -1,9 +1,10 @@
 dataset: ~
 method: ~
 use_wandb: false
-multi_gpu: false
+multi_gpu: true
 wandb_project: GRACE_recoverability
 exp_type: unsupervised
+emb_data_dir: ~
 Cora:
   seed: 39788
   learning_rate: 0.00005

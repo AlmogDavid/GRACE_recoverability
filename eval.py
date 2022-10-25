@@ -2,12 +2,14 @@ import glob
 import os
 from typing import List
 
+import hydra
 import numpy as np
 import functools
 
 import torch
 import tqdm
 import wandb
+from omegaconf import DictConfig
 from sklearn.metrics import f1_score, accuracy_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV
@@ -208,3 +210,32 @@ def label_classification_grace(X_train, X_test, y_train, y_test):
         'F1Ma': macro,
         'Accuracy': accuracy
     }
+
+@hydra.main(config_path="configs", config_name="default", version_base=None)  # Config name will be given via command line
+def main(root_config: DictConfig):
+    dataset_name = root_config.dataset
+    config = root_config[dataset_name] # Load the relevant part
+    eval_method = config['eval_method']
+    exp_type = root_config.exp_type
+
+    emb_data_dir = root_config["emb_data_dir"]
+    if emb_data_dir is None:
+        raise RuntimeError("You must give emb_data_dir")
+    with open(os.path.join(emb_data_dir, "classes.txt"), "r") as classes_file:
+        nb_classes = int(classes_file.readline())
+
+    if exp_type == "supervised":
+        print("Start testing using SUPERVISED method")
+        label_classification_supervised(emb_data_dir)
+    else:
+        if eval_method == "DGI":
+            print("Start testing using DGI method")
+            label_classification_dgi(emb_data_dir, nb_classes)
+        elif eval_method == "GRACE":
+            print("Start testing using GRACE method")
+            label_classification_grace(emb_data_dir)
+        else:
+            raise RuntimeError("Invalid classification method")
+
+if __name__ == "__main__":
+    main()
